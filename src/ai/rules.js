@@ -29,14 +29,20 @@ function evaluateRules({ inputs, results }) {
     });
   }
 
-  // Rule 2: Team size vs category
+  // Rule 2: Team size vs category (conventional headcount across all activities)
   const teamMinByCategory = { mcu: 8, digital: 20, ai: 40, gpu: 80, rf: 15, automotive: 40 };
   const minTeam = teamMinByCategory[inputs.category];
-  if (minTeam && inputs.teamSize < minTeam) {
+  const activities = inputs.titanTecton?.activities;
+  const layoutConvTeam = inputs.titanTecton?.layoutGeneration?.convTeamSize;
+  const totalTeamSize = activities && layoutConvTeam != null
+    ? activities.architecture.team + activities.rtlDesign.team + layoutConvTeam +
+      activities.integration.team + activities.otherEngineering.team
+    : null;
+  if (minTeam && totalTeamSize != null && totalTeamSize < minTeam) {
     insights.push({
       type: "warning",
       title: "Team may be undersized",
-      message: `Typical ${inputs.category} projects use ${minTeam}+ engineers. Your team of ${inputs.teamSize} may extend timeline significantly.`
+      message: `Typical ${inputs.category} projects use ${minTeam}+ engineers. Your team of ${totalTeamSize} may extend timeline significantly.`
     });
   }
 
@@ -58,12 +64,12 @@ function evaluateRules({ inputs, results }) {
     });
   }
 
-  // Rule 5: Cell library CTA (always show for meaningful projects)
+  // Rule 5: Titan Tecton CTA (always show for meaningful projects)
   if (inputs.areaMm2 >= 50 && inputs.volume >= 50_000 && nodeIndex(inputs.node) >= NODE_ORDER.indexOf("16/14nm")) {
     insights.push({
       type: "cta",
-      title: "AI-Optimized Cell Libraries",
-      message: `Your project (${inputs.areaMm2} mm² at ${inputs.volume.toLocaleString()} units) could see significant savings from AI-optimized cell libraries. See the Cell Library Impact tab.`
+      title: "Titan Tecton Cell Library",
+      message: `Your project (${inputs.areaMm2} mm² at ${inputs.volume.toLocaleString()} units) could see significant design/verification savings from Titan Tecton. See the Titan Tecton Impact tab.`
     });
   }
 

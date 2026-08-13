@@ -1,7 +1,6 @@
 const express = require("express");
 const costTables = require("../seed/costTables");
 const {
-  nreCost,
   costPerGoodDie,
   fullyLoadedCostPerDie,
   totalProjectCost,
@@ -10,7 +9,8 @@ const {
   diesPerWafer,
   yieldPoisson
 } = require("../calc/costEngine");
-const { applyCellLibraryToggle, compoundOverVolumes } = require("../calc/cellLibraryDesignCost");
+const { computeTitanTectonComparison } = require("../calc/titanTectonModel");
+const { DEFAULT_INPUTS } = require("../models/Project");
 
 const router = express.Router();
 
@@ -18,47 +18,38 @@ const COMPOUND_VOLUMES = [1e4, 1e5, 5e5, 1e6];
 
 /**
  * Shared core computation used by both POST / and POST /cell-library-impact,
- * so manufacturing metrics (dies/wafer, yield, cost per good die) and NRE
- * are always derived identically no matter which endpoint is called.
+ * so manufacturing metrics (dies/wafer, yield, cost per good die) and the
+ * Titan Tecton comparison are always derived identically no matter which
+ * endpoint is called.
  *
  * Returns { error } on bad input, otherwise the full computed core.
  */
 function computeCore(inputs) {
   const {
-    node, areaMm2, category, volume, teamSize, region,
-    designMonths, packageType, sellingPrice,
+    node, areaMm2, category, volume, packageType, sellingPrice,
     cellLibraryMode = "standard"
   } = inputs;
 
-  if (!node || !areaMm2 || !region) {
-    return { error: "Missing required inputs: node, areaMm2, region" };
+  if (!node || !areaMm2) {
+    return { error: "Missing required inputs: node, areaMm2" };
   }
 
   const mask = costTables.masks[node]?.mid;
   const waferCost = costTables.wafers[node]?.mid;
   const d0 = costTables.defectDensity[node]?.mature;
-  const labor = costTables.labor[region];
   const pkg = costTables.packaging[packageType];
 
-  if (!mask || !waferCost || !d0 || !labor) {
-    return { error: `Missing cost data. Check node='${node}' and region='${region}'.` };
+  if (!mask || !waferCost || !d0) {
+    return { error: `Missing cost data. Check node='${node}'.` };
   }
 
-  const monthlyLoaded = labor.loaded / 12;
-
-  // NRE (with breakdown) — standard, unmodified by the Cell Library toggle.
-  const nre = nreCost({
-    mask,
-    teamSize,
-    months: designMonths,
-    monthlyLoaded,
-    ipLicense: 500_000,
-    edaAnnualPerSeat: 200_000
-  });
+  // Foundry fees — same simple formula costEngine.js's nreCost() has always
+  // used (mask * 5%). Shared/unchanged between Conventional and Titan Tecton.
+  const foundryFees = mask * 0.05;
 
   // Manufacturing — the "standard manufacturing method". Identical
   // regardless of Cell Library selection: yield, dies/wafer, fabrication,
-  // packaging, and test are never touched by the design-cost toggle.
+  // packaging, and test are never touched by the Titan Tecton model.
   const dpw = diesPerWafer(areaMm2);
   const y = yieldPoisson(areaMm2, d0);
   const cpgd = costPerGoodDie({ waferCost, dieAreaMm2: areaMm2, d0 });
@@ -69,50 +60,43 @@ function computeCore(inputs) {
     testPerDie: 0.5
   });
 
-  // Titan Tecton (our cell library product) generates layouts that are
-  // already LVS/DRC-clean, so it replaces both manual design effort AND
-  // manual verification (LVS/DRC) effort. The flat 75% reduction therefore
-  // applies to design labor + verification labor combined.
-  //
-  // EDA licenses and IP license are NOT discounted — EDA tool licenses cover
-  // the broader chip-level flow (synthesis, STA, place & route, etc.) that
-  // Titan Tecton doesn't replace, and IP license covers third-party
-  // functional IP (e.g. CPU/memory/PHY cores) unrelated to the cell
-  // library. Mask, foundry fees, and contingency are likewise untouched.
-  const designAndVerifStandard = nre.breakdown.designLabor + nre.breakdown.verifLabor;
+  // Titan Tecton comparison — Conventional vs Titan Tecton, computed fully
+  // independently on each side from the activity-level engineering model
+  // (Architecture, RTL Design, Layout Generation, Integration, Other
+  // Engineering), EDA, IP license, and the Titan Tecton tool license itself.
+  const titanTecton = inputs.titanTecton || DEFAULT_INPUTS.titanTecton;
+  const comparison = computeTitanTectonComparison({ ...titanTecton, mask, foundryFees });
+
+  const isOptimized = cellLibraryMode === "optimized";
+  const effectiveNre = isOptimized ? comparison.nre.titan : comparison.nre.conventional;
+  const effectiveDurationMonths = isOptimized
+    ? comparison.designEffort.durationMonths.titan
+    : comparison.designEffort.durationMonths.conventional;
+
   const manufacturingCost = volume * cpgdFull;
-  const cellLibrary = applyCellLibraryToggle({
-    nreTotal: nre.total,
-    designCostStandard: designAndVerifStandard,
-    manufacturingCost,
-    mode: cellLibraryMode === "optimized" ? "optimized" : "standard"
-  });
-
-  // Scale design labor and verification labor by the same factor so the
-  // NRE breakdown table stays internally consistent with the combined
-  // discount (both line items get reduced together, at the same rate).
-  const scaleFactor = designAndVerifStandard > 0
-    ? cellLibrary.effectiveDesignCost / designAndVerifStandard
-    : 1;
-  const effectiveNreBreakdown = {
-    ...nre.breakdown,
-    designLabor: nre.breakdown.designLabor * scaleFactor,
-    verifLabor: nre.breakdown.verifLabor * scaleFactor
-  };
-
-  // Totals — reflect the selected Cell Library mode
-  const totalCost = totalProjectCost({ nre: cellLibrary.effectiveNreTotal, volume, cpgdFull });
-  const curve = costCurve(cellLibrary.effectiveNreTotal, cpgdFull);
+  const totalCost = totalProjectCost({ nre: effectiveNre, volume, cpgdFull });
+  const curve = costCurve(effectiveNre, cpgdFull);
   const be = sellingPrice
-    ? breakEvenVolume(cellLibrary.effectiveNreTotal, sellingPrice, cpgdFull)
+    ? breakEvenVolume(effectiveNre, sellingPrice, cpgdFull)
     : null;
 
+  const effectiveNreBreakdown = {
+    mask,
+    designVerifLabor: isOptimized ? comparison.designEffort.laborCost.titan : comparison.designEffort.laborCost.conventional,
+    edaCost: isOptimized ? comparison.eda.cost.titan : comparison.eda.cost.conventional,
+    ipLicense: isOptimized ? comparison.ip.titan : comparison.ip.conventional,
+    foundryFees,
+    contingency: isOptimized ? comparison.contingency.titan : comparison.contingency.conventional,
+    titanToolLicenseCost: isOptimized ? comparison.titanToolLicenseCost : 0
+  };
+
   return {
-    node, areaMm2, category, volume, teamSize, region, designMonths, packageType, sellingPrice,
-    mask, waferCost, d0, labor, pkg,
-    nre, dpw, y, cpgd, cpgdFull, manufacturingCost,
-    designAndVerifStandard, effectiveNreBreakdown,
-    cellLibrary, totalCost, curve, be
+    node, areaMm2, category, volume, packageType, sellingPrice,
+    mask, waferCost, d0, pkg, foundryFees,
+    dpw, y, cpgd, cpgdFull, manufacturingCost,
+    comparison, cellLibraryMode: isOptimized ? "optimized" : "standard",
+    effectiveNre, effectiveNreBreakdown, effectiveDurationMonths,
+    totalCost, curve, be
   };
 }
 
@@ -125,11 +109,14 @@ router.post("/", (req, res) => {
     const core = computeCore(req.body);
     if (core.error) return res.status(400).json({ error: core.error });
 
-    const { node, designMonths, cellLibrary, dpw, y, cpgd, cpgdFull, totalCost, curve, be, effectiveNreBreakdown } = core;
+    const {
+      node, dpw, y, cpgd, cpgdFull, totalCost, curve, be,
+      effectiveNre, effectiveNreBreakdown, effectiveDurationMonths, cellLibraryMode
+    } = core;
 
     res.json({
       outputs: {
-        nre: cellLibrary.effectiveNreTotal,
+        nre: effectiveNre,
         nreBreakdown: effectiveNreBreakdown,
         diesPerWafer: dpw,
         yield: y,
@@ -138,11 +125,10 @@ router.post("/", (req, res) => {
         totalCost,
         costCurve: curve,
         breakEvenVolume: be,
-        cellLibraryMode: cellLibrary.mode,
-        cellLibrary: cellLibrary.comparison,
+        cellLibraryMode,
         timelineMonths: {
-          low: designMonths + 5,
-          high: designMonths + 9
+          low: Math.ceil(effectiveDurationMonths) + 5,
+          high: Math.ceil(effectiveDurationMonths) + 9
         }
       },
       dataSources: {
@@ -160,31 +146,31 @@ router.post("/", (req, res) => {
 /**
  * POST /api/calc/cell-library-impact
  *
- * Titan Tecton Impact — Standard (Manual) vs Our Cell Library (Titan
- * Tecton, Optimized). Manufacturing metrics (die area, dies/wafer, yield,
- * cost per good die) are identical on both sides — the standard
- * manufacturing method never changes. Only design + verification cost
- * (flat 75% reduction, since Titan Tecton generates LVS/DRC-clean layouts)
- * and the totals derived from it differ. EDA licenses and IP license are
- * unaffected.
+ * Titan Tecton Impact — the full Conventional vs Titan Tecton comparison:
+ * activity-level engineering effort, the Layout Generation throughput
+ * model, design/verification labor, EDA, IP license, and NRE/total-bill
+ * totals for both sides. Manufacturing metrics (die area, dies/wafer,
+ * yield, cost per good die) are identical on both sides — the standard
+ * manufacturing method never changes.
  */
 router.post("/cell-library-impact", (req, res) => {
   try {
     const core = computeCore(req.body);
     if (core.error) return res.status(400).json({ error: core.error });
 
-    const { areaMm2, dpw, y, cpgd, cpgdFull, nre, cellLibrary, designAndVerifStandard } = core;
+    const { areaMm2, dpw, y, cpgd, cpgdFull, comparison, cellLibraryMode } = core;
 
-    const compound = compoundOverVolumes({
-      nreTotal: nre.total,
-      designCostStandard: designAndVerifStandard,
-      cpgdFull,
-      volumes: COMPOUND_VOLUMES
+    const compound = COMPOUND_VOLUMES.map((volume) => {
+      const totalBillConventional = comparison.nre.conventional + volume * cpgdFull;
+      const totalBillTitan = comparison.nre.titan + volume * cpgdFull;
+      const savings = totalBillConventional - totalBillTitan;
+      const savingsPct = totalBillConventional > 0 ? (savings / totalBillConventional) * 100 : 0;
+      return { volume, totalBillConventional, totalBillTitan, savings, savingsPct };
     });
 
     res.json({
       impact: {
-        mode: cellLibrary.mode,
+        mode: cellLibraryMode,
         // Fixed "standard manufacturing method" — identical regardless of
         // which Cell Library option is selected.
         manufacturing: {
@@ -194,8 +180,14 @@ router.post("/cell-library-impact", (req, res) => {
           costPerGoodDie: cpgd,
           cpgdFull
         },
-        designCost: cellLibrary.comparison.designCost,
-        totalBill: cellLibrary.comparison.totalBill
+        activityRows: comparison.activityRows,
+        layoutGeneration: comparison.layoutGeneration,
+        designEffort: comparison.designEffort,
+        eda: comparison.eda,
+        ip: comparison.ip,
+        titanToolLicenseCost: comparison.titanToolLicenseCost,
+        contingency: comparison.contingency,
+        nre: comparison.nre
       },
       compound
     });
