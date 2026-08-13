@@ -10,7 +10,16 @@ const {
   diesPerWafer,
   yieldPoisson
 } = require("../calc/costEngine");
-const { computeImpact, compoundImpactChart } = require("../calc/cellLibraryImpact");
+const { computeEngineeringImpact, computeManufacturingParams } = require("../calc/titanTectonImpact");
+const {
+  DEFAULT_ACTIVITIES,
+  DEFAULT_EDA_CONVENTIONAL,
+  DEFAULT_EDA_TITAN,
+  DEFAULT_IP_LICENSE,
+  DEFAULT_TITAN_TOOL_COST,
+  DEFAULT_CONTINGENCY_PCT,
+  DEFAULT_LOADED_SALARY_PER_YEAR
+} = require("../seed/titanActivities");
 
 const router = express.Router();
 
@@ -103,37 +112,53 @@ router.post("/", (req, res) => {
 });
 
 /**
- * POST /api/calc/cell-library-impact
+ * POST /api/calc/titan-impact
+ * Conventional vs Titan Tecton engineering-effort comparison.
+ * Manufacturing parameters are frozen and shown identically on both sides.
  */
-router.post("/cell-library-impact", (req, res) => {
+router.post("/titan-impact", (req, res) => {
   try {
-    const { areaMm2, node, volume, aiAreaFactor = 0.88 } = req.body;
+    const {
+      node, areaMm2,
+      activities = DEFAULT_ACTIVITIES,
+      edaConventional = DEFAULT_EDA_CONVENTIONAL,
+      edaTitan = DEFAULT_EDA_TITAN,
+      ipLicense = DEFAULT_IP_LICENSE,
+      titanReplacesIp = false,
+      ipLicenseReplacementValue = 0,
+      titanToolCost = DEFAULT_TITAN_TOOL_COST,
+      contingencyPct = DEFAULT_CONTINGENCY_PCT,
+      loadedSalaryPerYear = DEFAULT_LOADED_SALARY_PER_YEAR
+    } = req.body;
 
+    const mask = costTables.masks[node]?.mid;
     const waferCost = costTables.wafers[node]?.mid;
     const d0 = costTables.defectDensity[node]?.mature;
 
-    if (!waferCost || !d0) {
-      return res.status(400).json({ error: `Missing cost data for node '${node}'` });
+    if (!mask || !waferCost || !d0) {
+      return res.status(400).json({ error: `Missing cost data for node='${node}'.` });
     }
 
-    const impact = computeImpact({
-      baselineAreaMm2: areaMm2,
-      waferCost,
-      d0,
-      volume,
-      aiAreaFactor
+    const monthlyLoadedRate = loadedSalaryPerYear / 12;
+
+    const manufacturing = computeManufacturingParams({ areaMm2, waferCost, d0 });
+
+    const engineering = computeEngineeringImpact({
+      activities,
+      monthlyLoadedRate,
+      edaConventional,
+      edaTitan,
+      ipLicense,
+      titanReplacesIp,
+      ipLicenseReplacementValue,
+      titanToolCost,
+      mask,
+      contingencyPct
     });
 
-    const compound = compoundImpactChart({
-      baselineAreaMm2: areaMm2,
-      waferCost,
-      d0,
-      aiAreaFactor
-    });
-
-    res.json({ impact, compound });
+    res.json({ manufacturing, ...engineering });
   } catch (err) {
-    console.error("[cell-library-impact]", err);
+    console.error("[titan-impact]", err);
     res.status(500).json({ error: err.message });
   }
 });

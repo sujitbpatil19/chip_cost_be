@@ -1,4 +1,25 @@
 const mongoose = require("mongoose");
+const {
+  DEFAULT_ACTIVITIES,
+  DEFAULT_EDA_CONVENTIONAL,
+  DEFAULT_EDA_TITAN,
+  DEFAULT_IP_LICENSE,
+  DEFAULT_TITAN_TOOL_COST,
+  DEFAULT_CONTINGENCY_PCT,
+  DEFAULT_LOADED_SALARY_PER_YEAR
+} = require("../seed/titanActivities");
+
+const DEFAULT_TITAN_INPUTS = {
+  activities: DEFAULT_ACTIVITIES,
+  edaConventional: DEFAULT_EDA_CONVENTIONAL,
+  edaTitan: DEFAULT_EDA_TITAN,
+  ipLicense: DEFAULT_IP_LICENSE,
+  titanReplacesIp: false,
+  ipLicenseReplacementValue: 0,
+  titanToolCost: DEFAULT_TITAN_TOOL_COST,
+  contingencyPct: DEFAULT_CONTINGENCY_PCT,
+  loadedSalaryPerYear: DEFAULT_LOADED_SALARY_PER_YEAR
+};
 
 const DEFAULT_INPUTS = {
   node: "5nm",
@@ -10,8 +31,29 @@ const DEFAULT_INPUTS = {
   designMonths: 24,
   packageType: "cowos",
   sellingPrice: 500,
-  aiAreaFactor: 0.88
+  titan: DEFAULT_TITAN_INPUTS
 };
+
+// Activities are heterogeneous by `type` (team/duration "effort" activities vs
+// unit-throughput activities like layout generation), so they're stored as
+// free-form objects rather than a single rigid subschema.
+const edaSchema = new mongoose.Schema({
+  seats: { type: Number, required: true },
+  months: { type: Number, required: true },
+  annualPerSeat: { type: Number, required: true }
+}, { _id: false });
+
+const titanSchema = new mongoose.Schema({
+  activities: { type: [mongoose.Schema.Types.Mixed], default: () => DEFAULT_TITAN_INPUTS.activities },
+  edaConventional: { type: edaSchema, default: () => DEFAULT_TITAN_INPUTS.edaConventional },
+  edaTitan: { type: edaSchema, default: () => DEFAULT_TITAN_INPUTS.edaTitan },
+  ipLicense: { type: Number, default: DEFAULT_TITAN_INPUTS.ipLicense },
+  titanReplacesIp: { type: Boolean, default: DEFAULT_TITAN_INPUTS.titanReplacesIp },
+  ipLicenseReplacementValue: { type: Number, default: DEFAULT_TITAN_INPUTS.ipLicenseReplacementValue },
+  titanToolCost: { type: Number, default: DEFAULT_TITAN_INPUTS.titanToolCost },
+  contingencyPct: { type: Number, default: DEFAULT_TITAN_INPUTS.contingencyPct },
+  loadedSalaryPerYear: { type: Number, default: DEFAULT_TITAN_INPUTS.loadedSalaryPerYear }
+}, { _id: false });
 
 const inputsSchema = new mongoose.Schema({
   node: { type: String, default: DEFAULT_INPUTS.node },
@@ -23,7 +65,7 @@ const inputsSchema = new mongoose.Schema({
   designMonths: { type: Number, default: DEFAULT_INPUTS.designMonths },
   packageType: { type: String, default: DEFAULT_INPUTS.packageType },
   sellingPrice: { type: Number, default: DEFAULT_INPUTS.sellingPrice },
-  aiAreaFactor: { type: Number, default: DEFAULT_INPUTS.aiAreaFactor }
+  titan: { type: titanSchema, default: () => DEFAULT_TITAN_INPUTS }
 }, { _id: false });
 
 const metaSchema = new mongoose.Schema({
