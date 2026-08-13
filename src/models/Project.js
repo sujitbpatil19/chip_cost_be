@@ -10,7 +10,7 @@ const DEFAULT_INPUTS = {
   designMonths: 24,
   packageType: "cowos",
   sellingPrice: 500,
-  aiAreaFactor: 0.88
+  cellLibraryMode: "standard" // 'standard' | 'optimized' — flat 75% design-cost reduction toggle
 };
 
 const inputsSchema = new mongoose.Schema({
@@ -23,7 +23,11 @@ const inputsSchema = new mongoose.Schema({
   designMonths: { type: Number, default: DEFAULT_INPUTS.designMonths },
   packageType: { type: String, default: DEFAULT_INPUTS.packageType },
   sellingPrice: { type: Number, default: DEFAULT_INPUTS.sellingPrice },
-  aiAreaFactor: { type: Number, default: DEFAULT_INPUTS.aiAreaFactor }
+  cellLibraryMode: {
+    type: String,
+    enum: ["standard", "optimized"],
+    default: DEFAULT_INPUTS.cellLibraryMode
+  }
 }, { _id: false });
 
 const metaSchema = new mongoose.Schema({
