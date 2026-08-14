@@ -65,7 +65,22 @@ function computeCore(inputs) {
   // (Architecture, RTL Design, Layout Generation, Integration, Other
   // Engineering), EDA, IP license, and the Titan Tecton tool license itself.
   const titanTecton = inputs.titanTecton || DEFAULT_INPUTS.titanTecton;
-  const comparison = computeTitanTectonComparison({ ...titanTecton, mask, foundryFees });
+
+  // Guard: licenses must be a positive integer. It's a divisor in the
+  // layout-generation rate math, so 0/negative would produce Infinity or a
+  // negative rate, and fractional counts don't correspond to anything
+  // purchasable. Clamp rather than error — this is a cost-estimation tool,
+  // not a strict form — and don't mutate titanTecton (it may be the shared
+  // DEFAULT_INPUTS.titanTecton reference).
+  const rawLicenses = titanTecton.layoutGeneration?.licenses;
+  const licenses = Number.isFinite(rawLicenses) && rawLicenses >= 1 ? Math.floor(rawLicenses) : 1;
+
+  const comparison = computeTitanTectonComparison({
+    ...titanTecton,
+    layoutGeneration: { ...titanTecton.layoutGeneration, licenses },
+    mask,
+    foundryFees
+  });
 
   const isOptimized = cellLibraryMode === "optimized";
   const effectiveNre = isOptimized ? comparison.nre.titan : comparison.nre.conventional;
@@ -87,7 +102,7 @@ function computeCore(inputs) {
     ipLicense: isOptimized ? comparison.ip.titan : comparison.ip.conventional,
     foundryFees,
     contingency: isOptimized ? comparison.contingency.titan : comparison.contingency.conventional,
-    titanToolLicenseCost: isOptimized ? comparison.titanToolLicenseCost : 0
+    titanToolLicenseCost: isOptimized ? comparison.titanToolLicenseCost.total : 0
   };
 
   return {

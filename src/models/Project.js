@@ -5,30 +5,35 @@ const DEFAULT_INPUTS = {
   areaMm2: 400,
   category: "ai",
   volume: 100000,
-  packageType: "cowos",
-  sellingPrice: 500,
-  cellLibraryMode: "standard", // 'standard' | 'optimized' — which side (Conventional vs Titan Tecton) drives the headline totals
+  packageType: "cowos", // CoWoS/HBM — advanced packaging typical of a datacenter-class AI accelerator
+  sellingPrice: 2500, // datacenter AI accelerator ASP with HBM/CoWoS packaging runs well above $500 — $500 sat below fully-loaded cost/die and made break-even impossible on either side
+  cellLibraryMode: "standard", // 'standard' | 'optimized' — which side (Conventional vs Titan Tecton) drives the headline totals; defaults to the fully-manual Conventional flow
   titanTecton: {
-    loadedSalaryPerYear: 375000, // fully-loaded $/engineer/yr — drives every labor cost directly (no region lookup)
+    loadedSalaryPerYear: 350000, // fully-loaded $/engineer/yr — drives every labor cost directly (no region lookup); mid/high end of a senior US team's base-salary-plus-load-factor range
     activities: {
-      architecture: { team: 5, months: 3 },
-      rtlDesign: { team: 15, months: 8 },
-      integration: { team: 4, months: 4 },
-      otherEngineering: { team: 4, months: 4 }
+      // Sized for a real 5nm/400mm² AI accelerator program, not a placeholder: an
+      // explicit verification line doesn't exist in this 5-activity model, so its
+      // effort is folded into Integration and Other Engineering, which is why
+      // those two are staffed well above a bare bring-up team.
+      architecture: { team: 8, months: 5 },
+      rtlDesign: { team: 35, months: 10 },
+      integration: { team: 20, months: 6 },
+      otherEngineering: { team: 15, months: 5 }
     },
     layoutGeneration: {
       cellsInLibrary: 100, // informational — size of the cell library
-      totalLayoutsNeeded: 500000,
-      titanLayoutsGenerated: 500000,
-      titanHoursTaken: 6,
-      titanEngineers: 2,
-      convLayoutsPerEngineerDay: 10,
-      convTeamSize: 40
+      totalLayoutsNeeded: 50000, // this project's target: the 100-cell library itself
+      titanLayoutsGenerated: 50000, // benchmark: 100 cells x 500 layouts/cell, per license
+      titanHoursTaken: 6, // benchmark duration, per license
+      titanEngineers: 2, // supervisors, per license
+      licenses: 1, // Titan Tecton licenses purchased, run in parallel — scales rate and supervisors, and multiplies titanToolLicenseCost
+      convLayoutsPerEngineerDay: 6, // full-custom FinFET/GAA-node layout, even on derivative drive-strength/Vt variants, still needs real per-variant DRC/LVS debug time — 10/day read as too fast
+      convTeamSize: 20 // right-sized for a single 100-cell base library; 40 fit a much larger multi-thousand-cell full production library
     },
     eda: {
       ratePerSeatPerYear: 200000,
-      conventional: { seats: 24, months: 24 },
-      titan: { seats: 2, months: 2 }
+      conventional: { seats: 30, months: 30 }, // sized to the new, larger Conventional program above
+      titan: { seats: 3, months: 3 }
     },
     ip: {
       licenseAmount: 500000,
@@ -58,6 +63,7 @@ const titanTectonSchema = new mongoose.Schema({
     titanLayoutsGenerated: { type: Number, default: DEFAULT_INPUTS.titanTecton.layoutGeneration.titanLayoutsGenerated },
     titanHoursTaken: { type: Number, default: DEFAULT_INPUTS.titanTecton.layoutGeneration.titanHoursTaken },
     titanEngineers: { type: Number, default: DEFAULT_INPUTS.titanTecton.layoutGeneration.titanEngineers },
+    licenses: { type: Number, default: DEFAULT_INPUTS.titanTecton.layoutGeneration.licenses },
     convLayoutsPerEngineerDay: { type: Number, default: DEFAULT_INPUTS.titanTecton.layoutGeneration.convLayoutsPerEngineerDay },
     convTeamSize: { type: Number, default: DEFAULT_INPUTS.titanTecton.layoutGeneration.convTeamSize }
   },

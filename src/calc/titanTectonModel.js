@@ -25,13 +25,23 @@ const HOURS_PER_MONTH = 176;
  * Layout Generation throughput sub-model.
  *
  * Titan Tecton's rate is set by a benchmark (layouts generated / hours
- * taken). Conventional time is derived the same way, from an editable
- * per-engineer throughput assumption — neither side is a fixed duration.
+ * taken) — this is the throughput of ONE license. Licenses run in
+ * parallel, each working through the job independently, so `licenses`
+ * multiplies the combined rate directly (no diminishing returns the way
+ * team coordination has on the Conventional side): 2 licenses finish in
+ * half the time of 1, at the cost of a second license fee. Supervising
+ * headcount (`titanEngineers`) is per license too, and scales the same
+ * way — so total supervising effort (team × time) stays flat as licenses
+ * are added; the marginal cost of another license is essentially just its
+ * fee, not extra labor. Conventional time is derived the same way, from
+ * an editable per-engineer throughput assumption — neither side is a
+ * fixed duration.
  *
  * @param {number} totalLayoutsNeeded         Total layouts required for this project
- * @param {number} titanLayoutsGenerated      Layouts generated in the Titan Tecton benchmark
- * @param {number} titanHoursTaken            Hours taken for that benchmark
- * @param {number} titanEngineers             Engineers supervising Titan Tecton
+ * @param {number} titanLayoutsGenerated      Layouts generated in the Titan Tecton benchmark (per license)
+ * @param {number} titanHoursTaken            Hours taken for that benchmark (per license)
+ * @param {number} titanEngineers             Engineers supervising Titan Tecton, per license
+ * @param {number} licenses                   Titan Tecton licenses purchased, running in parallel (default 1)
  * @param {number} convLayoutsPerEngineerDay  Conventional throughput assumption
  * @param {number} convTeamSize               Conventional team size
  * @param {number} hoursPerDay                Working hours per day (default 8)
@@ -41,12 +51,15 @@ function computeLayoutGeneration({
   titanLayoutsGenerated,
   titanHoursTaken,
   titanEngineers,
+  licenses = 1,
   convLayoutsPerEngineerDay,
   convTeamSize,
   hoursPerDay = 8
 }) {
-  const titanRate = titanLayoutsGenerated / titanHoursTaken; // layouts/hr
+  const perLicenseRate = titanLayoutsGenerated / titanHoursTaken; // layouts/hr, one license
+  const titanRate = perLicenseRate * licenses; // combined rate, all licenses in parallel
   const titanHours = totalLayoutsNeeded / titanRate;
+  const titanTeam = titanEngineers * licenses; // supervisors scale with license count
 
   const convRatePerEngHr = convLayoutsPerEngineerDay / hoursPerDay; // layouts/hr/engineer
   const convHours = totalLayoutsNeeded / (convTeamSize * convRatePerEngHr);
@@ -55,7 +68,7 @@ function computeLayoutGeneration({
 
   return {
     conv: { team: convTeamSize, hours: convHours, ratePerEngHr: convRatePerEngHr },
-    titan: { team: titanEngineers, hours: titanHours, rate: titanRate },
+    titan: { team: titanTeam, hours: titanHours, rate: titanRate, perLicenseRate, licenses },
     speedup
   };
 }
@@ -138,7 +151,7 @@ function computeActivityEffort({ activities, layoutGeneration }) {
  * @param {object} inputs.eda                       { ratePerSeatPerYear, conventional: {seats, months}, titan: {seats, months} }
  * @param {object} inputs.ip                        { licenseAmount, titanReplacesIP }
  * @param {number} inputs.contingencyPct            e.g. 15 (percent, not fraction)
- * @param {number} inputs.titanToolLicenseCost      Cost of licensing Titan Tecton itself — added only to the Titan side, not netted against savings
+ * @param {number} inputs.titanToolLicenseCost      Cost of ONE Titan Tecton license — multiplied by layoutGeneration.licenses, added only to the Titan side, not netted against savings
  * @param {number} inputs.mask                      Mask cost (shared, unchanged)
  * @param {number} inputs.foundryFees                Foundry fees (shared, unchanged)
  */
@@ -147,6 +160,9 @@ function computeTitanTectonComparison(inputs) {
     loadedSalaryPerYear, activities, layoutGeneration, eda, ip,
     contingencyPct, titanToolLicenseCost, mask, foundryFees
   } = inputs;
+
+  const licenses = layoutGeneration.licenses || 1;
+  const totalTitanToolLicenseCost = titanToolLicenseCost * licenses;
 
   const monthlyLoaded = loadedSalaryPerYear / 12;
   const effort = computeActivityEffort({ activities, layoutGeneration });
@@ -171,9 +187,13 @@ function computeTitanTectonComparison(inputs) {
   const contingencyTitan = subtotalTitan * (contingencyPct / 100);
 
   // Titan Tecton's own license/tool cost is added on top of the Titan NRE
-  // only — it is never netted away against the savings it produces.
+  // only — it is never netted away against the savings it produces. Buying
+  // more licenses adds fee cost here but compresses layoutGeneration's
+  // hours (and therefore schedule) above — it's a schedule/capacity lever,
+  // not an additional source of labor savings once one license already
+  // covers the job.
   const nreConv = subtotalConv + contingencyConv;
-  const nreTitan = subtotalTitan + contingencyTitan + titanToolLicenseCost;
+  const nreTitan = subtotalTitan + contingencyTitan + totalTitanToolLicenseCost;
 
   return {
     activityRows: effort.rows,
@@ -211,7 +231,11 @@ function computeTitanTectonComparison(inputs) {
       titan: ipCostTitan,
       unchanged: !ip.titanReplacesIP
     },
-    titanToolLicenseCost,
+    titanToolLicenseCost: {
+      perLicense: titanToolLicenseCost,
+      licenses,
+      total: totalTitanToolLicenseCost
+    },
     contingency: { conventional: contingencyConv, titan: contingencyTitan },
     nre: { conventional: nreConv, titan: nreTitan }
   };
